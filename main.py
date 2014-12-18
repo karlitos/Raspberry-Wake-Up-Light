@@ -1,4 +1,7 @@
+#!/usr/bin/python
+
 import gst_player
+import clock
 import time
 import gobject
 import glob
@@ -28,13 +31,15 @@ def generate_random_music_file_list(music_folder):
 def main():
     # the main part of the program
 
-    #Specify your file bellow
-    #It can be any video/audio supported by gstreamer
+    clock2 = clock.LedClock()
+    clock2.run()
+
+    # Get audio files from the music folder in random order
     music_files = generate_random_music_file_list(MUSIC_FOLDER)
     print music_files
 
-    player = gst_player.Player(music_files)
-    player.play()
+    #player = gst_player.Player(music_files)
+    #player.play()
 
     # for vol_lvl in range(1, 20):
     #     player.set_volume(vol_lvl*0.1)
@@ -42,7 +47,7 @@ def main():
 
     #player.set_volume(0.,1)
     loop = gobject.MainLoop()
-    player.set_loop(loop)
+    #player.set_loop(loop)
     loop.run()
 
 #Execution starts here
