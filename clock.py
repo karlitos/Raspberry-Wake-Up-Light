@@ -2,113 +2,88 @@
 
 import time
 import datetime
+import SDL_PCF8563
 
 from Adafruit_LED_Backpack import SevenSegment
+from Adafruit_LED_Backpack import HT16K33
 
 
-class LedClock:
+class LedAlarmClock:
 
-    def __init__(self, address=0x70, bus_number=0):
+    # adapt to match yor setup
+    _BUS_NUMBER = 0  # 0 on the very first Raspberry Pi revision, 1 on every later version
+    _LED_DISPLAY_ADDRESS = 0x70
+
+    def __init__(self, address=_LED_DISPLAY_ADDRESS, bus_number=_BUS_NUMBER):
         # Remember the I2C address and bus number
-        self.address = address
-        self.bus_number = bus_number
+        self._address = address
+        self._bus_number = bus_number
         # Create display instance on specified I2C address and bus number.
-        self.display = SevenSegment.SevenSegment(address=self.address, busnum=self.bus_number)
+        self._display = SevenSegment.SevenSegment(address=self._address, busnum=self._bus_number)
+        # Create display backpack instance
+        self._backpack = HT16K33.HT16K33(address=self._address, busnum=self._bus_number)
         # Initialize the display. Must be called once before using the display.
-        self.display.begin()
-        # Keep track of the colon being turned on or off.
+        self._display.begin()
         # Clear the display buffer.
-        self.display.clear()
-        # set the initial time
-        self.hour = 0
-        self.minute = 0
-        self.second = 0
-        # the update interval in seconds
-        self.update_interval = 1
-        self.keep_running = True
-        # the instance of the alarm
-        self.alarm = AlarmClock()
+        self._display.clear()
 
-    def run(self):
-        while self.keep_running:
-            # update the clock time
-            now = datetime.datetime.now()
-            self.hour = now.hour
-            self.minute = now.minute
-            self.second = now.second
-            # set the tens and ones of hours and minutes
-            self.display.set_digit(0, int(self.hour / 10))     # Tens
-            self.display.set_digit(1, self.hour % 10)          # Ones
-            self.display.set_digit(2, int(self.minute / 10))   # Tens
-            self.display.set_digit(3, self.minute % 10)        # Ones
-            # Toggle colon at 1Hz
-            self.display.set_colon(self.second % 2)
-            self.display.write_display()
-            # now check if the alarm should not be started
-            if self.alarm.is_active():
-                print self.alarm.time_till_next_alarm()
-            time.sleep(self.update_interval)
+        # store an instance of the real-time clock module providing the time information
+        self._real_time_clock = SDL_PCF8563.SDL_PCF8563(0, 0x51)
+        # update the time with the time from time server
+        # only if timeserver reachable
 
-    def get_alarm(self):
-        return self.alarm
+        # the alarm part begins here
 
+        # We start with predefined alarm at 8:00 which will not be active
+        self._alarm_hour = 8
+        self._alarm_minute = 0
+        self.set_alarm_time(self._alarm_hour, self._alarm_minute)
+        self.deactivate_alarm()
+        # the alarm should be stopped after some time (1h 00min) so it won't play a whole day or so
+        self._maximal_alarm_duration = datetime.timedelta(hours=1, minutes=0)
 
-class AlarmClock:
-    def __init__(self, hour=8, minute=0):
-        # We start with predefined alarm at 8:00 which is not active
-        self.hour = hour
-        self.minute = minute
-        self.active = False
-        # the alarm should be stopped after some time (1h 00min)
-        self.duration = datetime.timedelta(hours=1, minutes=0)
+    def update_display(self):
+        now = self._real_time_clock.read_datetime()
+        #set the tens and ones of hours and minutes
+        self._display.set_digit(0, int(now.hour / 10))     # Tens
+        self._display.set_digit(1, now.hour % 10)          # Ones
+        self._display.set_digit(2, int(now.minute / 10))   # Tens
+        self._display.set_digit(3, now.minute % 10)        # Ones
+        # Toggle colon at 1Hz
+        self._display.set_colon(now.second % 2)
+        self._display.write_display()
 
-    def time_till_next_alarm(self):
-        now = datetime.datetime.now()  # get current date & time
-
-        # separate date and time from each other:
-        currdate = datetime.date(now.year, now.month, now.day)
-        currtime = datetime.time(now.hour, now.minute)
-        alarmtime = self.get_wake_up_time()
-        # add today's date onto the alarm time entered
-        alarmdatetime = datetime.datetime.combine(currdate, alarmtime)
-        if alarmtime <= currtime:  # if the alarm time is less than the current time set clock for tomorrow
-            alarmdatetime += datetime.timedelta(hours=24)
-
-        return (alarmdatetime - now).total_seconds()
-
+    def set_display_brightness(self, brightness_level):
+        self._backpack.set_display_brightness(brightness_level)
 
     def get_wake_up_time_str(self):
-        return {'hour': self.hour, 'minute': self.minute}
+        return {'hour': self._alarm_hour, 'minute': self._alarm_minute}
 
     def get_wake_up_time(self):
-        return datetime.time(hour=self.hour, minute=self.minute)
+        return datetime.time(hour=self._alarm_hour, minute=self._alarm_minute)
 
-    def set_time(self, hour, minute):
-        self.hour = hour
-        self.minute = minute
+    def set_alarm_time(self, hour, minute):
+        self._alarm_hour = hour
+        self._alarm_minute = minute
+        self._real_time_clock.set_daily_alarm(self._alarm_hour, self._alarm_minute)
 
-    def activate(self):
-        self.active = True
+    def activate_alarm(self):
+        # first stop alarm (could be triggered in the time of alarm interrupt inactivity)
+        self.stop_alarm()
+        self._real_time_clock.enable_alarm_interrupt()
 
-    def deactivate(self):
-        self.active = False
+    def deactivate_alarm(self):
+        self._real_time_clock.disable_alarm_interrupt()
 
-    def is_active(self):
-        return self.active
+    def is_alarm_active(self):
+        return self._real_time_clock.check_for_alarm_interrupt()
 
-    def on_wake_up(self):
-        # start the wake up
+    def check_if_alarm_on(self):
+        self._real_time_clock.check_if_alarm_on()
+
+    def stop_alarm(self):
+        self._real_time_clock.turn_alarm_off()
+
+    def on_alarm(self):
+        # start the wake up procedure ;-)
         print 'Wake up!'
-
-
-
-
-
-#Execution starts here
-if __name__ == '__main__':
-
-    clock = LedClock(0x70, 0)
-    clock.get_alarm().activate()
-    clock.get_alarm().set_time(1,26)
-    clock.run()
-
