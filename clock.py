@@ -79,7 +79,7 @@ class LedAlarmClock:
         return self._real_time_clock.check_for_alarm_interrupt()
 
     def check_if_alarm_on(self):
-        self._real_time_clock.check_if_alarm_on()
+        return self._real_time_clock.check_if_alarm_on()
 
     def stop_alarm(self):
         self._real_time_clock.turn_alarm_off()
